@@ -1,0 +1,528 @@
+---
+title: "A Study on the Relationship between Height and Foot Size"
+date: "2022-09-05"
+output:
+  html_document:
+    df_print: paged
+---
+
+## A Study on the Relationship between Height and Foot Size
+
+**1) Data pre-processing: consolidate the two body height and shoe/foot size data files in one data file containing relevant attributes. The data may contain some imperfection that requires some data cleansing activities. Please describe these activities and provide necessary justifications and assumptions in the report.**
+
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r message=FALSE, warning=FALSE}
+library(pdftools)
+library(tidyverse)
+library(measurements)
+library(dplyr)
+library(broom)
+library(rmarkdown)
+library(knitr)
+library(lmtest)
+```
+
+The first step in the data analysis process is data pre-processing. In this step, the raw data is converted into a clean and structured format for further study.
+
+```{r Read foot01.csv,include = FALSE}
+footData1<-read.csv("foot01.csv")
+str(footData1)
+summary(footData1)
+colnames(footData1)<-c("Record","Gender","Height(cm)","EUSize")
+```
+
+After checking the summary of the **foot01.csv** dataset, we found that there is one NA which is removed by na.omit function. In the height, there are some data recorded by meter and centimeter. Then the data in meters is multiplied by 100 to unified the standard of height. Also there is a maximum data point for height is 364cm, according to the record the tallest person in the world is 272cm, then we remove the outlier which height is bigger than 272. We also set the column name that prepares for a combined data set later.
+
+```{r Remove NA data, outlier, and unified standard of height in cm}
+footData1<-na.omit(footData1)
+footData1[footData1$`Height(cm)`<2,3]<-100*footData1[footData1$`Height(cm)`<2,3]
+footData1<-footData1[footData1$`Height(cm)`<280,]
+footData1[footData1$Gender == "woman", 2]<- "F"
+footData1[footData1$Gender == "man", 2]<- "M"
+str(footData1)
+summary(footData1)
+footData1[,1]<-1:99
+```
+
+Since the second dataset is in pdf------**foot-length-and-body-height-data-2017-18.pdf**, we use pdftools to extract text from PDF, and use stringr packages which is a member of the tidyverse collection of R packages to manipulate strings of text. and create a neat dataset.
+
+First, use pdt_text command to read the text of the files, create new objects pdfData, and read_lines() function to read the lines of the file.\
+We want to get the useful info, this is the lines 4 to 56 and 60 to 112 of our file(2 tables). Row 4 &60 contains the column names of the data we generated, naming the data frame as data_lines1 and data_lines2.
+
+```{r #Read foot-length-and-body-height-data-2017-18.pdf 2 tables talbe1,include=FALSE }
+pdfData<-pdf_text("foot-length-and-body-height-data-2017-18.pdf") %>% 
+  readr::read_lines() 
+#pdf data1
+table1<-pdfData[4:56]
+table1<-str_squish(table1)
+var_lines1<-table1[1] %>% 
+  unlist()
+
+var_lines1[c(1,2,3,4)]<-c("Record","Gender","Foot (cm ± 0.10 cm) ","Height (cm ± 0.10 cm)")
+data_lines1<-table1[2:52]
+data_lines1 [data_lines1 ==""] <-NA
+footTable1<-data.frame(data_lines1)
+class(footTable1)
+```
+
+Use the complete.cases function to filter out all data rows in the dataframe that do not contain missing values and use str_split function to split the elements of each string into substrings.
+
+```{r talbe1 filter out missing values and split into substring,include=FALSE}
+footTable1<-footTable1[complete.cases(footTable1),]
+str(footTable1)
+footTable1<-str_split(footTable1," ")
+footTable1<-t(data.frame(footTable1))
+```
+
+After names using colnames and rownames, we use the rbind function to join these two tables together. We can see they are characters. Convert them to integer and numeric objects using as.integer and as.numeric.
+
+```{r table1 colnames and rownames }
+colnames(footTable1)<-var_lines1
+rownames(footTable1)<-NULL
+footTable1<-as.data.frame(footTable1)
+```
+
+```{r read pdf data2,include=FALSE}
+table2<-pdfData[60:112]
+table2<-str_squish(table2)
+var_lines2<-table2[1] %>% 
+  unlist()
+
+var_lines2[c(1,2,3,4)]<-c("Record","Gender","Foot (cm ± 0.10 cm) ","Height (cm ± 0.10 cm)")
+data_lines2<-table2[2:52]
+data_lines2 [data_lines2 ==""] <-NA
+footTable2<-data.frame(data_lines2)
+footTable2<-footTable2[complete.cases(footTable2),]
+str(footTable2)
+footTable2<-str_split(footTable2," ")
+footTable2<-t(data.frame(footTable2))
+footTable2[,1]<-26:50
+```
+
+```{r table2 colnames and rownames}
+colnames(footTable2)<-var_lines2
+rownames(footTable2)<-NULL
+footTable2<-as.data.frame(footTable2)
+```
+
+```{r Merge pdf 2 tables to footData2}
+footData2<-rbind(footTable1,footTable2)
+footData2$Record<-as.integer(footData2$Record)
+footData2$`Height (cm ± 0.10 cm)`<-as.numeric(footData2$`Height (cm ± 0.10 cm)`)
+footData2$`Foot (cm ± 0.10 cm) `<-as.numeric(footData2$`Foot (cm ± 0.10 cm) `)
+str(footData2)
+summary(footData2)
+footData2
+```
+
+For the file **FLtoEUsize.csv**, by checking variable type, we can see the foot.length is character. Then we extract the number part from the foot.length, we change the variable foot length to numeric. Using the table of foot length and EU size, we convert the Foot variable from the second data set into EU size.
+
+```{r Read FLtoEUSize.csv and Convert cm to EU size,include=FALSE }
+fLtoEUSize<-read.csv("FLtoEUSize.csv")
+str(fLtoEUSize)
+#Convert foot length to numeric
+fLtoEUSize$foot.length<-as.numeric(gsub("[^0-9]","",fLtoEUSize$foot.length))
+fLtoEUSize$foot.length<-conv_unit(as.numeric(gsub("[^0-9]","",fLtoEUSize$foot.length)), "mm","cm")
+str(fLtoEUSize)
+fLtoEUSize
+#Change cm to EU size
+footData2$Foot<-NA
+for (i in 1:50){
+  for (j in 1:31){
+    if ( fLtoEUSize[j,2] < footData2[i,3] & footData2[i,3] <= fLtoEUSize[j+1,2] )
+      footData2[i,5]=fLtoEUSize[j+1,1]
+    else j=j+1
+  }
+}
+footData2
+```
+
+Then we found that there are foot lengths that don't have a corresponding EU size, therefore we treat them as outliers and remove them.
+
+```{r remove the data point which corresponding EUsize not available,include=FALSE }
+footData2<-na.omit(footData2)
+str(footData2)
+summary(footData2)
+footData2<-footData2[,-3]
+colnames(footData2)<-c("Record","Gender","Height(cm)","EUSize")
+```
+
+By setting the same column name, then we can combine the two datasets together for further analysis. Finally, we use the arrange function to order data by Height.
+
+```{r Combine two data set }
+footdata<-rbind(footData1, footData2)
+footdata<-arrange(footdata,footdata$`Height(cm)`)
+summary(footdata)
+footdata[,1]<-1:147
+footdata
+write.csv(footdata,'footdataprocessed.csv')
+```
+
+## Plots
+
+**2) What is the correlation between body height and shoe size:**
+
+```{r pressure, echo=FALSE}
+footdata$Gender<-factor(footdata$Gender)
+ggplot(data=footdata, aes(x=EUSize,y=`Height(cm)`, colour=Gender)) +
+  geom_point()+
+  ggtitle("Scatter Plot of Height and Shoe Size")
+
+```
+
+
+ *correlation between height and foot size* 
+
+```{r include=FALSE}
+datafemale<-footdata[footdata$Gender=='F',]
+datamale<-footdata[footdata$Gender=='M',]
+cor.test(footdata$EUSize, footdata$`Height(cm)`)
+cor.test(datafemale$EUSize, datafemale$`Height(cm)`)
+cor.test(datamale$EUSize, datamale$`Height(cm)`)
+```
+
+|        | Correlation Coefficient |95% confidence interval |   Significance p-value    |
+| ----------- | ----------- | ----------- | ----------- |
+| ALL      |   0.780   | 0.707-0.836 |<2.2e-16|
+| Female   | 0.503 |0.342-0.636 |<6.975e-8 |
+| Male   |0.757  |0.596-0.859 |<1.807e-9 |
+
+The height is considered as an independent variable and shoe size as a dependent variable. Through the scatter plot, we can see that there is a positive linear correlation between them. 
+
+The correlation coefficient measures the strength and direction of the relationship between two variables. The above table indicates a positive relationship between height and foot size. As the p<0.05, the correlation is statistically significant. 
+
+
+
+**3) Create a histogram based on foot size values. **
+```{r create a histogram based on foot size value, echo=FALSE}
+footsizehist<-ggplot(data=footdata,aes(x=EUSize))
+footsizehist+geom_histogram(binwidth=1,colour="#42f5b3",fill="blue")+xlab("Foot Size in EU Size") + ylab("Frequency")+ggtitle("Foot Size Distribution")+geom_vline(xintercept=mean(footdata$EUSize),col="red",lwd=1)+annotate("text",x = median(footdata$EUSize) ,y = median(footdata$EUSize),label = paste("Median =", median(footdata$EUSize)),col = "red",size = 4)
+
+```
+
+**4) Enhance the figure generated in 3) **
+*i)Create a facet chart based on genders*
+
+```{r Enhance the figure, echo=FALSE}
+footsizehist+geom_histogram(binwidth=1,colour="#42f5b3",fill="blue")+xlab("Foot Size in EU Size") + ylab("Frequency")+facet_grid(Gender~.)+geom_vline(aes(xintercept=median(EUSize)),col="red",lwd=1)
+```
+
+*ii) Provide descriptive descriptions and insights of the visualisations, not less than 200 words.*
+
+The dataset was carried out for estimation of stature from the length of 147 people, out of which 45 were males and 102 were females.
+```{r Gender Male}
+summary(datamale)
+sd(datamale$`Height(cm)`)
+sd(datamale$EUSize)
+```
+
+Stature varied from 156.8 cm to 206 cm with SD of 9.208 cm in males. Mean value of Height in males was 179.2 cm. 
+In females it varied from 151.9 cm to 184 cm with SD of 7.087. Mean value of Height in female participants was 166.0 cm.  
+
+```{r Gender Female}
+summary(datafemale)
+sd(datafemale$`Height(cm)`)
+sd(datafemale$EUSize)
+```
+
+Foot length in males varied between 39 to 50. In females, the range of females foot length was from 33 to 45.  Mean foot length in males was 43.04 with SD of 2.449.  Mean foot length in females was 38.37 with SD of 1.833.  
+
+```{r Gender}
+foottest1<-shapiro.test(footdata$EUSize)
+foottest1
+foottest2<-shapiro.test(datamale$EUSize)
+foottest2
+foottest3<-shapiro.test(datafemale$EUSize)
+foottest3
+```
+
+The p-value reflects the probability of obeying the normal distribution. The smaller the value, the smaller the probability. Usually, 0.05 is used as the standard. If it is greater than 0.05, it means that it conforms to the normal distribution (here, all=4.847e-06 and female=0.0001049), so it conforms to the normal distribution.
+But male EUSize p-value = 0.05263, which is more than 0.05, and these sparse values in males told us need to get more males data. 
+
+The median of females size is near the total median because of the dataset of female is bigger than man. Another reason is that male’s size is much bigger than female and median is 43. 
+
+We can see these six foot length categories corresponded with European shoes size 39.00 to 45.00 were the foot length categories with sufficient men and women to enable a valid statistical between-gender comparison.
+
+They are not perfectly bell shaped.
+
+From the plot, we can see that the distribution of female shoe size is approximately normal distribution. Male tend to have bigger shoe sizes than females on average. 
+
+
+**5) Create linear regression models of human body heights and shoe sizes for the entire population, female population and male population respectively. Generate plots of the models over the samples. Justify comprehensively your answer using the model summaries. **
+
+# Regression based on the entire population
+
+```{r Create lLnear Regression Entire Population}
+regfull<-lm(formula=footdata$`Height(cm)`~footdata$EUSize)
+regfull
+
+footdata$fullfitted<-66.8149+2.5948*footdata$EUSize
+
+ggplot(data=footdata, aes(x=EUSize,y=`Height(cm)`) )+
+  geom_point(size=1, alpha=0.5) +
+  geom_smooth(method=lm) +
+  ggtitle("linear regression for entire population")
+
+```
+
+
+Residuals:
+
+|     Min  |     1Q |  Median  |     3Q   |   Max |
+| ----------- | ----------- | ----------- | ----------- | ----------- |
+|-21.5423  |-3.0949  | 0.1767|   3.8444 | 17.0715 |
+
+- Residuals are the difference between the predicted value and actual value. 
+- The result shows that our distribution is not quite symmetric and our model is not predicting as well at lower shoe size ranges(min=-21.5423) as it does for the high ranges(max=17.0715). Through the part (6) Q-Q plot, it may due to data point 12 which is quite far away from other points. 
+
+
+Coefficients:
+
+|  Estimate  | Std.  | Error |  t value |  Pr(> |t|)   |  
+| ----------- | ----------- | ----------- | ----------- | ----------- |       
+|(Intercept)   |   66.8149  |   6.9005 |  9.683  | <2e-16 ***|
+|footdata$EUSize  | 2.5948  |   0.1729 | 15.007 |  <2e-16 ***|
+
+
+Signif. codes:  
+
+0 ‘*** ’ 0.001 ‘** ’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+- This part tell us the estimated coefficients of our formula. std.error measures how much uncertainty is associated with the coefficient which can help us to compute the confidence interval for the coefficient. T value is the test statistic for the hypothesis with the null hypothesis is that the coefficient is 0. 
+- From the result, we can have the estimated regression equation: Height= 2.5948* EUsize+66.8149. 95% confidence interval around our slope EUsize is (2.5948-1.96 * 0.1729, 2.5948+1.96*0.1729). By checking the t value and Pr(>|t|), <2e-16 in our case, which indicate the coefficient is very statistically significant. 
+
+Residual standard error: 6.201 on 145 degrees of freedom
+
+Multiple R-squared:  0.6083,	Adjusted R-squared:  0.6056 
+
+F-statistic: 225.2 on 1 and 145 DF,  p-value: < 2.2e-16
+
+- This part help us to understand how well the regression model fit in our dataset. Residual standard error measures how well the model fits the data. Multiple R-squared which tells us what is the percentage of variation within our dependent variable that the independent variable is explain. F-statistic is the test statistic for the hypothesis with null hypothesis is that where is no relationship between the dependent variable and the independent variable and alternative is that there is a relationship.
+
+- Residual standard error is 6.201 which means on average, the actual values are 6.2 away from the predicted values with height range from 150 to 210 indicate the model is moderate accurate. 
+
+- Multiple R-squared in our case indicate that shoe size explain 60.83% of the variation in height. It means that shoe size help to explains part of variation within heigh, but not as much as we expect. 
+
+- With p value <2.2e-16 in our case, it would lead us to reject the null hypothesis and conclude that there is a strong evidence that a relationship does exist between height and shoe size. 
+
+
+# Regression based on female population
+```{r Female Population}
+datafemale<-footdata[footdata$Gender=='F',]
+
+regfemale<-lm(formula=datafemale$`Height(cm)`~datafemale$EUSize)
+regfemale
+
+ggplot(data=datafemale, aes(x=EUSize,y=`Height(cm)`) )+
+  geom_point(size=1, alpha=0.5) +
+  geom_smooth(method=lm) +
+  ggtitle("linear regression for female population")
+```
+
+
+Residuals:
+    
+|  Min  |      1Q  |  Median |       3Q |      Max | 
+| ----------- | ----------- | ----------- | ----------- | ----------- |
+| -13.8292 |  -4.8928  |  0.6394 |   3.7208 |  15.8579 | 
+
+
+- Residuals are the difference between the predicted value and actual value. 
+
+- The result shows that our distribution is somehow symmetric with 1Q and 3Q, Min and Max have similar magnitude. 
+
+Coefficients:
+        
+|  Estimate  | Std.  | Error |  t value |  Pr(> |t|)   |  
+| ----------- | ----------- | ----------- | ----------- | ----------- |   
+|  (Intercept)      |     91.396   |    12.831  |   7.123|   1.65e-10 ***|  
+|  datafemale$EUSize  |    1.946  |      0.334|     5.825 |  6.97e-08 ***|  
+
+
+Signif. codes:  0 ‘ *** ’ 0.001 ‘ ** ’ 0.01 ‘ * ’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+- From the result, we can have the estimated regression equation: Height= 1.946*EUsize+91.3With Pr(>|t|) very close to 0 in our case, it indicate the coefficient is very statistically significant. 
+
+Residual standard error: 6.154 on 100 degrees of freedom
+
+Multiple R-squared:  0.2533,	Adjusted R-squared:  0.2459 
+
+F-statistic: 33.93 on 1 and 100 DF,  p-value: 6.975e-08
+
+- Residual standard error is 6.154 which means on average, the actual values are 6.154 away from the predicted values with height range from 150 to 185 indicate the model is moderate accurate. 
+
+- Multiple R-squared in our case indicate that shoe size explain 25.33% of the variation in height. It means that shoe size help to explains only very small part of variation within heigh.
+
+- With p value = 6.975e-08 in our case, it would lead us to reject the null hypothesis and conclude that there is a strong evidence that a relationship does exist between height and shoe size. 
+
+# Regression based on male population
+```{r Male Population}
+datamale<-footdata[footdata$Gender=='M',]
+regmale<-lm(formula=datamale$`Height(cm)`~datamale$EUSize)
+regmale
+
+ggplot(data=datamale, aes(x=EUSize,y=`Height(cm)`) )+
+  geom_point(size=1, alpha=0.5) +
+  geom_smooth(method=lm) +
+  ggtitle("linear regression for male population")
+```
+
+Residuals:
+
+|  Min  |      1Q  |  Median |       3Q |      Max | 
+| ----------- | ----------- | ----------- | ----------- | ----------- |
+|-22.264  |-3.085  |-1.149|   3.731|  11.659 |
+
+- The result shows that our distribution is not quite symmetric and our model is not predicting as well at lower shoe size ranges(min=-22.264) as it does for the high ranges(max=11.659).
+
+Coefficients:
+        
+|  Estimate  | Std.  | Error |  t value |  Pr(> |t|)   |  
+| ----------- | ----------- | ----------- | ----------- | ----------- | 
+|(Intercept)     | 56.7640  |  16.1579 |  3.513 | 0.00106 ** |
+|datamale$EUSize   |2.8453  |   0.3748  | 7.592| 1.81e-09 ***|
+
+Signif. codes:  0 ‘*** ’ 0.001 ‘** ’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+- From the result, we can have the estimated regression equation: Height= 2.8453* EUsize+56.7640. 95% confidence interval around our slope EUsize is (2.8453-1.96* 0.3748, 2.8453+1.96*0.3748). By checking the t value and Pr(>|t|)|, 1.81e-09 is very close to 0 in our case which indicate the coefficient is very statistically significant. 
+
+Residual standard error: 6.089 on 43 degrees of freedom
+
+Multiple R-squared:  0.5727,	Adjusted R-squared:  0.5628 
+
+F-statistic: 57.64 on 1 and 43 DF,  p-value: 1.807e-09
+
+
+- Residual standard error is 6.089 which means on average, the actual values are 6.089 away from the predicted values with height range from 150 to 210 indicate the model is moderate accurate. 
+
+- Multiple R-squared in our case indicate that shoe size explain 57.27% of the variation in height. It means that shoe size help to explains part of variation within heigh, but not as much as we expect. 
+
+- With p value = 1.807e-09 in our case, it would lead us to reject the null hypothesis and conclude that there is a strong evidence that a relationship does exist between height and shoe size.
+
+
+**6) Based on the results from 5) above, analyse the residuals to determine if the assumptions underlying your regression analysis are valid. You need to provide a visualisation for this purpose and justify your answer. **
+ 
+The key assumptions of the regression including:
+
+1. Linearity of the data
+
+2. Normality of residuals
+
+3. Homogeneity of residual variance
+
+4. Independence
+
+# Full Dataset 
+
+```{r echo=FALSE}
+ggplot(data=footdata, aes(x=EUSize,y=`Height(cm)`)) + geom_point() + stat_smooth(method=lm, se=FALSE) + geom_segment(aes(xend = EUSize, yend=fullfitted), color="red", size=0.3)
+
+par(mfrow = c(2,2))
+plot(regfull)
+bptest(regfull)
+```
+
+
+The above diagnostic plots shows:
+
+1.Residuals vs Fitted
+
+It is used to check linear relationship assumptions. A horizontal line, without distinct patterns is an indication for a linear relationship, in our case, the line is roughly a horizontal line without distinct patterns.
+
+
+2.Normal Q-Q
+
+It is used to examine whether the residuals are normally distributed. It's good if residual points follow the straight dashed line. In our case, most of points in the middle lie well along the 45-degree line,  however the tail are observed to have larger values than what we expecting indicates a heavier tail.
+
+
+3.Scale-Location
+
+It is used to check the homogeneity of variance of the residuals. Horizontal line with equally spread points is a good indication. In our case, the red line is approximately horizontal and the equally spread points is a bit less clear. Therefore we use a Breusch Pagan Test to check homogeneity formally.
+
+studentized Breusch-Pagan test
+
+data:  regfull
+
+BP = 2.5346, df = 1, p-value = 0.1114
+
+With p-value>0.05, where the null hypothesis is homogeneity, we fail to reject it.
+
+4.Residuals vs Leverage
+
+It is used to identify influential cases, which are extreme values that may influence the regression results when included or excluded from the analysis. The top 3 extreme data points(#12, #146, #147) are labeled in the plot. #12 has a standardized residual below -3 which indicates it may be an outlier. #146 and #147 have a high leverage compared to other data points.
+
+
+
+# Female Dataset
+```{r Female Dataset,echo=FALSE}
+par(mfrow = c(2,2))
+plot(regfemale)
+bptest(regfemale)
+```
+
+The above diagnostic plots shows:
+
+1.Residuals vs Fitted
+
+The red line is not like horizontal line which may suggest some non-linearity.
+
+
+2.Normal Q-Q
+
+In our case, most of points in the middle lie well along the 45-degree line,  with a left end above the line indicate short tail on the left and a right end is above the line indicate long tail on the right.
+
+
+3.Scale-Location
+
+The red line seems raising not horizontal line means the average is not approximately constant. Therefore, we use a Breusch Pagan Test to check homogeneity formally.
+studentized Breusch-Pagan test
+
+data:  regfemale
+
+BP = 3.3681, df = 1, p-value = 0.06647
+
+With p-value>0.05, where the null hypothesis is homogeneity, we fail to reject it.
+
+4.Residuals vs Leverage
+
+It is used to identify influential cases, which are extreme values that may influence the regression results when included or excluded from the analysis. The top 3 extreme data points(#95, #65, #66) are labeled in the plot. These three data points have a high leverage compared to other data points.
+
+
+
+# Male Dataset
+```{r  Male Dataset,echo=FALSE}
+par(mfrow = c(2,2))
+plot(regmale)
+bptest(regmale)
+```
+
+
+The above diagnostic plots shows:
+
+1.Residuals vs Fitted
+
+In our case, the line is roughly a horizontal line without distinct patterns that indicate the linear relationship assumption hold.
+
+
+2.Normal Q-Q
+
+In our case, points lie well along the 45-degree line that indicate normality assumption hold.
+
+
+3.Scale-Location
+
+In our case, the red line is approximately horizontal and the equally spread points is a bit less clear. Therefore we use a Breusch Pagan Test to check homogeneity formally.
+studentized Breusch-Pagan test
+
+data:  regmale
+
+BP = 0.27834, df = 1, p-value = 0.5978
+
+With p-value>0.05, where the null hypothesis is homogeneity, we fail to reject it.
+
+4.Residuals vs Leverage
+
+The top 3 extreme data points(#1, #44, #45) are labeled in the plot. #1 has a standardised residual below -3 which indicates it may be an outlier. #44 and #45 have a high leverage compared to other data points.
